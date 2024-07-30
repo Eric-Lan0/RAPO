@@ -66,7 +66,7 @@ run_iteration() {
     local json_output_wo=$9
     local i=$10
 
-    if [ $i != 1 ]; then
+    if [ ${i} > 0 ]; then
         # conda activate vllm
         conda activate /apdcephfs_us/share_300814644/user/ericglan/.conda/envs/vllm
 
@@ -87,10 +87,10 @@ run_iteration() {
 
     # conda activate rlhflow
     conda activate /apdcephfs_us/share_300814644/user/ericglan/.conda/envs/rlhflow
-    accelerate launch --config_file ./configs/zero3.yaml ${algo}_iteration/run_${algo}.py --run_name $iteration --output_dir $model_output_path --model_name_or_path $model_path --ref_model $initial_model --learning_rate 5e-7 --max_steps 1200 --choose_type max_min --train_dir $reward_data_path --eval_dir $reward_data_path --loss_type sigmoid --lr_scheduler_type cosine
+    accelerate launch --config_file ./configs/zero3.yaml ${algo}_iteration/run_${algo}.py --run_name $iteration --output_dir $model_output_path --model_name_or_path $model_path --ref_model $initial_model --learning_rate 5e-7 --max_steps 1200 --choose_type max_min --train_dir $reward_data_path --eval_dir $reward_data_path --loss_type sigmoid --lr_scheduler_type cosine --neg_type const --lamb ${lamb}
 }
 
-# Main loop for iterations
+# Main loop for iterations 1..3
 for i in {1..3}
 do
     iteration_name="LLaMA3_iter${i}"
