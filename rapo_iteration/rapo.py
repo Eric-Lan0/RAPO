@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from dataclasses import dataclass
 import numpy as np
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
@@ -194,6 +195,8 @@ class PreferenceDataCollatorWithPadding:
 
             batch_element = self.tokenize_batch_element(prompt, chosen, rejected)
             batch_element["margin"] = feature["margin"]
+            batch_element["p_rewards"] = feature["p_rewards"]
+            batch_element["n_rewards"] = feature["n_rewards"]
             tokenized_batch.append(batch_element)
 
         # return collated batch
@@ -278,6 +281,8 @@ class PreferenceTrainer(DPOTrainer):
         self.len_penalty = len_penalty
         self.neg_type=neg_type,
         self.lamb=lamb,
+        if type(self.lamb) == tuple:
+            self.lamb = self.lamb[0]
 
     def tokenize_row(self, feature, model: Optional[Union[PreTrainedModel, nn.Module]] = None) -> Dict:
         """Tokenize a single row from a DPO specific dataset.
@@ -446,6 +451,7 @@ class PreferenceTrainer(DPOTrainer):
 
         We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
+        # print(batch.keys())
         concatenated_batch = self.concatenated_inputs(
             batch,
             is_encoder_decoder=self.is_encoder_decoder,
@@ -514,7 +520,7 @@ class PreferenceTrainer(DPOTrainer):
         if self.aux_loss_enabled:
             return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, nll_loss, outputs.aux_loss)
 
-        return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, nll_loss, batch["p_rewards"], batch["n_rewards"])
+        return (chosen_logps, rejected_logps, chosen_logits, rejected_logits, nll_loss, torch.tensor(batch["p_rewards"]).to(device=self.accelerator.device), torch.tensor(batch["n_rewards"]).to(device=self.accelerator.device))
 
     def rapo_loss(
         self,
@@ -550,16 +556,16 @@ class PreferenceTrainer(DPOTrainer):
         if self.neg_type is None:
             pi_logratios = policy_chosen_logps - policy_rejected_logps
             ref_logratios = reference_chosen_logps - reference_rejected_logps + len_penalty
-        elif self.neg_type == "const":
+        elif self.neg_type == "const" or self.neg_type[0] == "const":
             pi_logratios = policy_chosen_logps - self.lamb * policy_rejected_logps
             ref_logratios = reference_chosen_logps - self.lamb * reference_rejected_logps + len_penalty
-        elif self.neg_type == "ra":
+        elif self.neg_type == "ra" or self.neg_type[0] == "ra":
             pi_logratios = policy_chosen_logps - 1 / (1 + np.max([n_rewards, 0])) * policy_rejected_logps
             ref_logratios = reference_chosen_logps - 1 / (1 + np.max([n_rewards, 0])) * reference_rejected_logps + len_penalty
-        elif self.neg_type == "app_1":
+        elif self.neg_type == "app_1" or self.neg_type[0] == "app_1":
             pi_logratios = policy_chosen_logps - 1 / (1 - 0.1 * self.beta * reference_rejected_logps) * policy_rejected_logps
             ref_logratios = reference_chosen_logps - 1 / (1 - 0.1 * self.beta * reference_rejected_logps) * reference_rejected_logps + len_penalty
-        elif self.neg_type == "app_2":
+        elif self.neg_type == "app_2" or self.neg_type[0] == "app_2":
             pi_logratios = policy_chosen_logps - 1 / (1 + np.max([rejected_rewards, 0])) * policy_rejected_logps
             ref_logratios = reference_chosen_logps - 1 / (1 + np.max([rejected_rewards, 0])) * reference_rejected_logps + len_penalty
         else:
@@ -668,6 +674,8 @@ class PreferenceTrainer(DPOTrainer):
             len_penalty = 0
 
         margin = torch.tensor(batch["margin"], dtype=policy_chosen_logps.dtype).to(self.accelerator.device)
+        # print(type(reference_rejected_logps), reference_rejected_logps.size(), reference_rejected_logps)
+        # print(type(p_rewards), p_rewards)
         losses, chosen_rewards, rejected_rewards = self.rapo_loss(
             policy_chosen_logps,
             policy_rejected_logps,
@@ -691,3 +699,30 @@ class PreferenceTrainer(DPOTrainer):
         metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.detach().cpu().mean()
 
         return losses.mean(), metrics
+    
+    def compute_loss(
+        self,
+        model: Union[PreTrainedModel, nn.Module],
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+        return_outputs=False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        # print(inputs.keys())
+        if not self.use_dpo_data_collator:
+            warnings.warn(
+                "compute_loss is only implemented for DPODataCollatorWithPadding, and you passed a datacollator that is different than "
+                "DPODataCollatorWithPadding - you might see unexpected behavior. Alternatively, you can implement your own prediction_step method if you are using a custom data collator"
+            )
+
+        compute_loss_context_manager = torch.cuda.amp.autocast if self._peft_has_been_casted_to_bf16 else nullcontext
+
+        with compute_loss_context_manager():
+            loss, metrics = self.get_batch_loss_metrics(model, inputs, train_eval="train")
+
+        # Make sure to move the loss to the device the original accumulating loss is at back in the `Trainer` class:
+        loss = loss.to(self.args.device)
+        # force log the metrics
+        self.store_metrics(metrics, train_eval="train")
+
+        if return_outputs:
+            return (loss, metrics)
+        return loss
