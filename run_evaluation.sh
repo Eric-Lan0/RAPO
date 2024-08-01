@@ -70,3 +70,4 @@ lm_eval --model hf \
 #     --output_path ${output_path}
 
 # leaderboard_math_hard, math_word_problems, mathqa, ifeval,gpqa,mmlu,hellaswag,truthfulqa,gsm8k
+
