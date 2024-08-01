@@ -1,6 +1,7 @@
 export https_proxy=http://9.21.0.122:11113
 export http_proxy=http://9.21.0.122:11113
 export ftp_proxy=http://9.21.0.122:11113
+export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
 
 source ~/.bashrc
 
