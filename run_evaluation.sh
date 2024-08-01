@@ -18,7 +18,7 @@ export ftp_proxy=http://9.21.0.122:11113
 # bash run_evaluation.sh
 
 # Base paths
-algo="dpo"  # rapo
+algo="rapo"  # rapo
 method="const"  # const ra app_1 app_2
 lamb=0.5  # lambda
 i=3  # iteration index
@@ -39,8 +39,11 @@ else
     fi
 fi
 iteration_name="LLaMA3_iter${i}"
-model_path="/apdcephfs_us/share_300814644/user/ericglan/Online-RLHF/checkpoint/${style}/${location}/${prefix}${iteration_name}"
-output_path="/apdcephfs_us/share_300814644/user/ericglan/lm-evaluation-harness/eval_results/${style}/${location}"
+# model_path="/apdcephfs_us/share_300814644/user/ericglan/Online-RLHF/checkpoint/${style}/${location}/${prefix}${iteration_name}"
+# output_path="/apdcephfs_us/share_300814644/user/ericglan/lm-evaluation-harness/eval_results/${style}/${location}/"
+
+model_path="/apdcephfs_us/share_300814644/user/ericglan/Online-RLHF/sft_checkpoint/LLaMA3-SFT"
+output_path="/apdcephfs_us/share_300814644/user/ericglan/lm-evaluation-harness/eval_results/sft/"
 
 
 # # accelerate
@@ -50,20 +53,20 @@ output_path="/apdcephfs_us/share_300814644/user/ericglan/lm-evaluation-harness/e
 #     --batch_size 8 \
 #     --output_path ${output_path}
 
+task="mmlu"
+# large models
+lm_eval --model hf \
+    --model_args pretrained=${model_path},trust_remote_code=True,parallelize=True \
+    --tasks "${task}" \
+    --batch_size 8 \
+    --output_path "${output_path}/${task}/"
 
-# # large models
-# lm_eval --model hf \ 
-#     --model_args pretrained=${model_path},parallelize=True \
-#     --tasks ifeval,gpqa,mmlu,hellaswag,truthfulqa,gsm8k,mathqa \
-#     --batch_size 8 \
+
+# # vllm
+# lm_eval --model vllm \
+#     --model_args pretrained=${model_path},trust_remote_code=True,tensor_parallel_size=${my_world_size},dtype=auto,gpu_memory_utilization=0.8,data_parallel_size=${model_replicas} \
+#     --tasks math_word_problems \
+#     --batch_size auto \
 #     --output_path ${output_path}
 
-
-# vllm
-lm_eval --model vllm \
-    --model_args pretrained=${model_path},tensor_parallel_size=${my_world_size},dtype=auto,gpu_memory_utilization=0.8,data_parallel_size=${model_replicas} \
-    --tasks math_word_problems \
-    --batch_size auto \
-    --output_path ${output_path}
 # leaderboard_math_hard, math_word_problems, mathqa, ifeval,gpqa,mmlu,hellaswag,truthfulqa,gsm8k
-
